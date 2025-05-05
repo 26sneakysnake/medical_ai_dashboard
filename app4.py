@@ -13,8 +13,6 @@ import plotly.graph_objects as go
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.cluster import KMeans
 import json
-from chatbot import NanterreMedicalChatbot, add_chatbot_to_dashboard
-
 
 # Configuration de la page
 st.set_page_config(
