@@ -7,4 +7,6 @@ seaborn>=0.12.2
 scikit-learn>=1.3.0
 folium>=0.14.0
 streamlit-folium>=0.15.0
-python-dotenv 
+python-dotenv
+reportlab
+kaleido
