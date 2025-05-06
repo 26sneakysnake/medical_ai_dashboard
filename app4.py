@@ -5,6 +5,19 @@ os.environ["LOKY_MAX_CPU_COUNT"] = "8"  # Ajustez selon votre configuration
 # Ignorer l'avertissement de dépréciation pour choropleth_mapbox
 warnings.filterwarnings("ignore", category=DeprecationWarning, message=".*choropleth_mapbox.*")
 
+import tempfile
+from datetime import datetime
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
+from reportlab.platypus import PageBreak, ListFlowable, ListItem
+from reportlab.lib.units import inch, cm
+from io import BytesIO
+from PIL import Image as PILImage
+import matplotlib.pyplot as plt
+import base64
+import kaleido
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -2696,6 +2709,996 @@ def view_mode_clusters(filtered_data):
                             st.markdown(f"• {rec}")
 
 
+def generate_report_pdf(data, territory_level, territory_name, include_sections, include_recommendations=True):
+    """
+    Génère un rapport PDF pour un territoire donné
+    
+    Args:
+        data: DataFrame contenant les données
+        territory_level: Niveau territorial ('region', 'departement', 'commune')
+        territory_name: Nom du territoire sélectionné
+        include_sections: Dict avec les sections à inclure
+        include_recommendations: Booléen pour inclure des recommandations
+    
+    Returns:
+        BytesIO contenant le PDF généré
+    """
+    # Imports explicites pour s'assurer que tout est disponible
+    import os
+    import numpy as np
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    from io import BytesIO
+    from datetime import datetime
+    import tempfile
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
+    from reportlab.platypus import PageBreak, ListFlowable, ListItem
+    from reportlab.lib.units import inch, cm
+    
+    # Créer un buffer pour stocker le PDF
+    buffer = BytesIO()
+    
+    # Configuration du document
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=72,
+        leftMargin=72,
+        topMargin=72,
+        bottomMargin=72,
+        title=f"Rapport Medical'IA - {territory_name}",
+        author="Medical'IA - KESK'IA"
+    )
+    
+    # Styles
+    styles = getSampleStyleSheet()
+    styles['Title'].fontSize = 24
+    styles['Title'].spaceAfter = 30
+    styles['Heading1'].fontSize = 16
+    styles['Heading1'].spaceAfter = 12
+    styles['Heading1'].spaceBefore = 20
+
+    styles['Heading2'].fontSize = 14
+    styles['Heading2'].spaceAfter = 10
+    styles['Heading2'].spaceBefore = 15
+
+    styles['Normal'].fontSize = 10
+    styles['Normal'].spaceAfter = 8
+    
+    # Liste des éléments du document
+    elements = []
+    
+    # Titre et en-tête
+    current_date = datetime.now().strftime("%d/%m/%Y")
+    
+    elements.append(Paragraph(f"Medical'IA - Analyse des Déserts Médicaux", styles['Title']))
+    elements.append(Paragraph(f"Rapport pour : {territory_name}", styles['Heading1']))
+    elements.append(Paragraph(f"Date de génération : {current_date}", styles['Normal']))
+    elements.append(Spacer(1, 20))
+    
+    # Logo et introduction
+    intro_text = f"""
+    Ce rapport fournit une analyse détaillée de l'accessibilité aux soins médicaux pour 
+    {territory_name}. L'indice APL (Accessibilité Potentielle Localisée) est utilisé comme 
+    indicateur principal, mesurant le nombre de consultations/visites accessibles par habitant par an.
+    
+    Un territoire est considéré comme un désert médical lorsque l'APL est inférieur à 2,5, 
+    et la situation est critique lorsqu'il est inférieur à 1,5.
+    """
+    elements.append(Paragraph(intro_text, styles['Normal']))
+    elements.append(Spacer(1, 10))
+    
+    # Préparer les données spécifiques au territoire
+    if territory_level == 'region':
+        # Assurons-nous que nous travaillons avec des chaînes
+        data_copy = data.copy()
+        if 'region' not in data_copy.columns:
+            # Si la colonne region n'existe pas, créer une mappage à partir des codes département
+            region_map = {
+                '01': 'Auvergne-Rhône-Alpes', '03': 'Auvergne-Rhône-Alpes', '07': 'Auvergne-Rhône-Alpes', 
+                '15': 'Auvergne-Rhône-Alpes', '26': 'Auvergne-Rhône-Alpes', '38': 'Auvergne-Rhône-Alpes',
+                '42': 'Auvergne-Rhône-Alpes', '43': 'Auvergne-Rhône-Alpes', '63': 'Auvergne-Rhône-Alpes',
+                '69': 'Auvergne-Rhône-Alpes', '73': 'Auvergne-Rhône-Alpes', '74': 'Auvergne-Rhône-Alpes',
+                '21': 'Bourgogne-Franche-Comté', '25': 'Bourgogne-Franche-Comté', '39': 'Bourgogne-Franche-Comté',
+                '58': 'Bourgogne-Franche-Comté', '70': 'Bourgogne-Franche-Comté', '71': 'Bourgogne-Franche-Comté',
+                '89': 'Bourgogne-Franche-Comté', '90': 'Bourgogne-Franche-Comté',
+                '22': 'Bretagne', '29': 'Bretagne', '35': 'Bretagne', '56': 'Bretagne',
+                '18': 'Centre-Val de Loire', '28': 'Centre-Val de Loire', '36': 'Centre-Val de Loire',
+                '37': 'Centre-Val de Loire', '41': 'Centre-Val de Loire', '45': 'Centre-Val de Loire',
+                '2A': 'Corse', '2B': 'Corse',
+                '08': 'Grand Est', '10': 'Grand Est', '51': 'Grand Est', '52': 'Grand Est',
+                '54': 'Grand Est', '55': 'Grand Est', '57': 'Grand Est', '67': 'Grand Est',
+                '68': 'Grand Est', '88': 'Grand Est',
+                '02': 'Hauts-de-France', '59': 'Hauts-de-France', '60': 'Hauts-de-France',
+                '62': 'Hauts-de-France', '80': 'Hauts-de-France',
+                '75': 'Île-de-France', '77': 'Île-de-France', '78': 'Île-de-France', '91': 'Île-de-France',
+                '92': 'Île-de-France', '93': 'Île-de-France', '94': 'Île-de-France', '95': 'Île-de-France',
+                '14': 'Normandie', '27': 'Normandie', '50': 'Normandie', '61': 'Normandie', '76': 'Normandie',
+                '16': 'Nouvelle-Aquitaine', '17': 'Nouvelle-Aquitaine', '19': 'Nouvelle-Aquitaine',
+                '23': 'Nouvelle-Aquitaine', '24': 'Nouvelle-Aquitaine', '33': 'Nouvelle-Aquitaine',
+                '40': 'Nouvelle-Aquitaine', '47': 'Nouvelle-Aquitaine', '64': 'Nouvelle-Aquitaine',
+                '79': 'Nouvelle-Aquitaine', '86': 'Nouvelle-Aquitaine', '87': 'Nouvelle-Aquitaine',
+                '09': 'Occitanie', '11': 'Occitanie', '12': 'Occitanie', '30': 'Occitanie',
+                '31': 'Occitanie', '32': 'Occitanie', '34': 'Occitanie', '46': 'Occitanie',
+                '48': 'Occitanie', '65': 'Occitanie', '66': 'Occitanie', '81': 'Occitanie', '82': 'Occitanie',
+                '44': 'Pays de la Loire', '49': 'Pays de la Loire', '53': 'Pays de la Loire',
+                '72': 'Pays de la Loire', '85': 'Pays de la Loire',
+                '04': 'Provence-Alpes-Côte d\'Azur', '05': 'Provence-Alpes-Côte d\'Azur',
+                '06': 'Provence-Alpes-Côte d\'Azur', '13': 'Provence-Alpes-Côte d\'Azur',
+                '83': 'Provence-Alpes-Côte d\'Azur', '84': 'Provence-Alpes-Côte d\'Azur',
+                '971': 'Outre-Mer', '972': 'Outre-Mer', '973': 'Outre-Mer', '974': 'Outre-Mer', '976': 'Outre-Mer',
+                '975': 'Outre-Mer', '977': 'Outre-Mer', '978': 'Outre-Mer', '986': 'Outre-Mer', '987': 'Outre-Mer',
+                '988': 'Outre-Mer'
+            }
+            data_copy['departement'] = data_copy['CODGEO'].apply(lambda x: str(x)[:2])
+            data_copy['region'] = data_copy['departement'].map(region_map)
+        
+        # Filtrer pour la région spécifiée
+        filtered_data = data_copy[data_copy['region'] == territory_name]
+        
+        # Extraire les départements uniques (en tant que chaînes)
+        departments = sorted(filtered_data['CODGEO'].apply(lambda x: str(x)[:2]).unique())
+        
+        # Tableau d'information sur la région
+        if not filtered_data.empty:
+            region_data = filtered_data.groupby('region').agg({
+                'P16_POP': 'sum',
+                'APL': lambda x: np.average(x, weights=filtered_data.loc[x.index, 'P16_POP']),
+                'CODGEO': 'count'
+            }).reset_index()
+            
+            desert_count = len(filtered_data[filtered_data['APL'] < 2.5])
+            desert_percent = (desert_count / len(filtered_data)) * 100 if len(filtered_data) > 0 else 0
+            
+            if not region_data.empty:
+                region_info = [
+                    ["Population totale", f"{int(region_data['P16_POP'].iloc[0]):,}".replace(',', ' ')],
+                    ["Nombre de communes", f"{int(region_data['CODGEO'].iloc[0]):,}".replace(',', ' ')],
+                    ["APL moyen pondéré", f"{region_data['APL'].iloc[0]:.2f}"],
+                    ["Communes en désert médical", f"{desert_count} ({desert_percent:.1f}%)"]
+                ]
+                
+                # Ajouter le tableau d'information
+                elements.append(Paragraph("Informations générales sur la région", styles['Heading2']))
+                region_table = Table(region_info, colWidths=[4*cm, 4*cm])
+                region_table.setStyle(TableStyle([
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                    ('BACKGROUND', (0, 0), (0, -1), colors.lightgrey),
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 9)
+                ]))
+                elements.append(region_table)
+        
+    elif territory_level == 'departement':
+        # Filtrer pour le département spécifié
+        data_copy = data.copy()
+        # Assurons-nous que CODGEO est une chaîne pour l'extraction du département
+        data_copy['dept_code'] = data_copy['CODGEO'].apply(lambda x: str(x)[:2])
+        filtered_data = data_copy[data_copy['dept_code'] == territory_name]
+        
+        # Tableau d'information sur le département
+        if not filtered_data.empty:
+            total_pop = filtered_data['P16_POP'].sum()
+            weighted_apl = (filtered_data['APL'] * filtered_data['P16_POP']).sum() / total_pop if total_pop > 0 else 0
+            desert_count = len(filtered_data[filtered_data['APL'] < 2.5])
+            desert_percent = (desert_count / len(filtered_data)) * 100 if len(filtered_data) > 0 else 0
+            
+            dept_info = [
+                ["Population totale", f"{int(total_pop):,}".replace(',', ' ')],
+                ["Nombre de communes", f"{len(filtered_data)}"],
+                ["APL moyen pondéré", f"{weighted_apl:.2f}"],
+                ["Communes en désert médical", f"{desert_count} ({desert_percent:.1f}%)"]
+            ]
+            
+            # Ajouter le tableau d'information
+            elements.append(Paragraph(f"Informations générales sur le département {territory_name}", styles['Heading2']))
+            dept_table = Table(dept_info, colWidths=[4*cm, 4*cm])
+            dept_table.setStyle(TableStyle([
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('BACKGROUND', (0, 0), (0, -1), colors.lightgrey),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9)
+            ]))
+            elements.append(dept_table)
+        
+    else:  # commune
+        # Filtrer pour la commune spécifiée
+        commune_data = data[data['CODGEO'] == territory_name]
+        
+        if not commune_data.empty:
+            commune_name = commune_data['Communes'].iloc[0]
+            
+            # Tableau d'information sur la commune
+            commune_info = [
+                ["Nom de la commune", commune_name],
+                ["Code INSEE", territory_name],
+                ["Population", f"{int(commune_data['P16_POP'].iloc[0]):,}".replace(',', ' ')],
+                ["APL", f"{commune_data['APL'].iloc[0]:.2f}"],
+                ["Statut", "Désert médical" if commune_data['APL'].iloc[0] < 2.5 else "Accès médical suffisant"]
+            ]
+            
+            # Ajouter le tableau d'information
+            elements.append(Paragraph(f"Informations générales sur la commune {commune_name}", styles['Heading2']))
+            commune_table = Table(commune_info, colWidths=[4*cm, 4*cm])
+            commune_table.setStyle(TableStyle([
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('BACKGROUND', (0, 0), (0, -1), colors.lightgrey),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9)
+            ]))
+            elements.append(commune_table)
+    
+    elements.append(Spacer(1, 20))
+    
+    # Sections configurables
+    if include_sections.get('carte_apl', False):
+        elements.append(Paragraph("Carte de l'accessibilité aux soins", styles['Heading1']))
+        elements.append(Paragraph("Une visualisation cartographique est disponible dans l'interface interactive de l'application web Medical'IA.", styles['Normal']))
+        elements.append(Spacer(1, 10))
+        
+        # Créer un graphique temporaire
+        elements.append(Spacer(1, 10))
+    
+    if include_sections.get('statistiques_detaillees', False):
+        elements.append(Paragraph("Statistiques détaillées", styles['Heading1']))
+        
+        if territory_level in ['region', 'departement']:
+            # Analyser la distribution des communes par catégorie d'APL
+            apl_categories = [
+                "Désert médical critique (APL < 1.5)",
+                "Désert médical (APL 1.5-2.5)",
+                "Sous-équipement médical (APL 2.5-3.5)",
+                "Équipement médical suffisant (APL 3.5-4.5)",
+                "Bon équipement médical (APL > 4.5)"
+            ]
+            
+            # Créer les conditions pour la catégorisation
+            filtered_copy = filtered_data.copy()  # Pour éviter les avertissements SettingWithCopyWarning
+            conditions = [
+                (filtered_copy["APL"] < 1.5),
+                (filtered_copy["APL"] >= 1.5) & (filtered_copy["APL"] < 2.5),
+                (filtered_copy["APL"] >= 2.5) & (filtered_copy["APL"] < 3.5),
+                (filtered_copy["APL"] >= 3.5) & (filtered_copy["APL"] < 4.5),
+                (filtered_copy["APL"] >= 4.5)
+            ]
+            
+            # Assigner les catégories
+            filtered_copy['APL_category'] = np.select(conditions, apl_categories, default="Non catégorisé")
+            
+            # Compter les communes par catégorie
+            apl_counts = filtered_copy['APL_category'].value_counts().reset_index()
+            apl_counts.columns = ['Catégorie', 'Nombre de communes']
+            
+            # Calculer le pourcentage
+            total_communes = apl_counts['Nombre de communes'].sum()
+            apl_counts['Pourcentage'] = (apl_counts['Nombre de communes'] / total_communes * 100).round(1)
+                        
+            # Ajouter un tableau avec les chiffres
+            elements.append(Paragraph("Répartition des communes par catégorie d'APL", styles['Heading2']))
+            
+            # Préparer les données pour le tableau
+            table_data = [['Catégorie', 'Nombre de communes', 'Pourcentage (%)']]
+            for _, row in apl_counts.iterrows():
+                table_data.append([
+                    row['Catégorie'],
+                    str(row['Nombre de communes']),
+                    f"{row['Pourcentage']}%"
+                ])
+            
+            # Créer le tableau
+            table = Table(table_data, colWidths=[7*cm, 3*cm, 3*cm])
+            table.setStyle(TableStyle([
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9)
+            ]))
+            elements.append(table)
+        
+        # Pour les communes, montrer des statistiques supplémentaires si disponibles
+        if territory_level == 'commune' and not commune_data.empty:
+            elements.append(Paragraph("Contexte socio-démographique", styles['Heading2']))
+            
+            # Préparer les données démographiques
+            demo_data = []
+            if '0_14_pop_rate' in commune_data.columns:
+                demo_data.append(["Population 0-14 ans", f"{commune_data['0_14_pop_rate'].iloc[0]:.1f}%"])
+            if '15_59_pop_rate' in commune_data.columns:
+                demo_data.append(["Population 15-59 ans", f"{commune_data['15_59_pop_rate'].iloc[0]:.1f}%"])
+            if '60+_pop_rate' in commune_data.columns:
+                demo_data.append(["Population 60+ ans", f"{commune_data['60+_pop_rate'].iloc[0]:.1f}%"])
+            
+            # Ajouter d'autres indicateurs
+            if 'median_living_standard' in commune_data.columns:
+                demo_data.append(["Niveau de vie médian", f"{commune_data['median_living_standard'].iloc[0]:.0f}€"])
+            if 'density_area' in commune_data.columns:
+                demo_data.append(["Densité de population", f"{commune_data['density_area'].iloc[0]:.1f} hab/km²"])
+            
+            # Créer un tableau
+            if demo_data:
+                demo_table = Table(demo_data, colWidths=[4*cm, 4*cm])
+                demo_table.setStyle(TableStyle([
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                    ('BACKGROUND', (0, 0), (0, -1), colors.lightgrey),
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 9)
+                ]))
+                elements.append(demo_table)
+            
+            # Ajouter un commentaire sur le contexte
+            elements.append(Spacer(1, 10))
+            context_comment = f"""
+            La commune de {commune_name} présente un indice APL de {commune_data['APL'].iloc[0]:.2f}, 
+            ce qui la classe dans la catégorie {"des déserts médicaux" if commune_data['APL'].iloc[0] < 2.5 else "des zones correctement desservies"}.
+            """
+            elements.append(Paragraph(context_comment, styles['Normal']))
+
+    # Saut de page avant la section analyse comparative
+    elements.append(PageBreak())
+        
+    if include_sections.get('analyse_comparative', False):
+        elements.append(Paragraph("Analyse comparative", styles['Heading1']))
+        
+        # Créer un graphique de comparaison simple
+        try:
+            # Récupérer les données nationales et locales pour la comparaison
+            national_apl = data['APL'].mean()
+            weighted_national_apl = (data['APL'] * data['P16_POP']).sum() / data['P16_POP'].sum() if data['P16_POP'].sum() > 0 else 0
+            national_desert_percent = len(data[data['APL'] < 2.5]) / len(data) * 100 if len(data) > 0 else 0
+            
+            if territory_level == 'region' and not filtered_data.empty:
+                territory_apl = filtered_data['APL'].mean()
+                weighted_territory_apl = (filtered_data['APL'] * filtered_data['P16_POP']).sum() / filtered_data['P16_POP'].sum() if filtered_data['P16_POP'].sum() > 0 else 0
+                territory_desert_percent = len(filtered_data[filtered_data['APL'] < 2.5]) / len(filtered_data) * 100 if len(filtered_data) > 0 else 0
+                
+                territory_label = territory_name
+                
+            elif territory_level == 'departement' and not filtered_data.empty:
+                territory_apl = filtered_data['APL'].mean()
+                weighted_territory_apl = (filtered_data['APL'] * filtered_data['P16_POP']).sum() / filtered_data['P16_POP'].sum() if filtered_data['P16_POP'].sum() > 0 else 0
+                territory_desert_percent = len(filtered_data[filtered_data['APL'] < 2.5]) / len(filtered_data) * 100 if len(filtered_data) > 0 else 0
+                
+                territory_label = f"Département {territory_name}"
+                
+            elif territory_level == 'commune' and not commune_data.empty:
+                territory_apl = commune_data['APL'].iloc[0]
+                weighted_territory_apl = territory_apl  # Pour une commune, l'APL brut et pondéré sont identiques
+                territory_desert_percent = 100 if territory_apl < 2.5 else 0
+                
+                territory_label = commune_data['Communes'].iloc[0]
+                
+            else:
+                # Si pas de données, créer des valeurs par défaut
+                territory_apl = 0
+                weighted_territory_apl = 0
+                territory_desert_percent = 0
+                territory_label = "Non disponible"
+                        
+            # Ajouter un tableau comparatif
+            elements.append(Paragraph("Comparaison des indicateurs clés", styles['Heading2']))
+            
+            comparative_data = [
+                ["Indicateur", territory_label, "Niveau national", "Différence"],
+                ["APL moyen", f"{territory_apl:.2f}", f"{national_apl:.2f}", f"{territory_apl - national_apl:+.2f}"],
+                ["APL pondéré", f"{weighted_territory_apl:.2f}", f"{weighted_national_apl:.2f}", f"{weighted_territory_apl - weighted_national_apl:+.2f}"],
+                ["% en désert médical", f"{territory_desert_percent:.1f}%", f"{national_desert_percent:.1f}%", f"{territory_desert_percent - national_desert_percent:+.1f}%"]
+            ]
+            
+            comp_table = Table(comparative_data, colWidths=[3*cm, 3*cm, 3*cm, 3*cm])
+            comp_table.setStyle(TableStyle([
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9)
+            ]))
+            elements.append(comp_table)
+            
+            # Ajouter une analyse textuelle
+            elements.append(Spacer(1, 10))
+            
+            # Texte d'analyse
+            if territory_apl < national_apl:
+                analysis_text = f"""
+                {territory_label} présente un APL moyen inférieur à la moyenne nationale ({territory_apl:.2f} contre {national_apl:.2f}). 
+                La proportion de {"communes" if territory_level != 'commune' else "la population"} en situation de désert médical y est {"plus élevée" if territory_desert_percent > national_desert_percent else "moins élevée"} 
+                que la moyenne nationale ({territory_desert_percent:.1f}% contre {national_desert_percent:.1f}%).
+                """
+            else:
+                analysis_text = f"""
+                {territory_label} présente un APL moyen supérieur à la moyenne nationale ({territory_apl:.2f} contre {national_apl:.2f}). 
+                La proportion de {"communes" if territory_level != 'commune' else "la population"} en situation de désert médical y est {"plus élevée" if territory_desert_percent > national_desert_percent else "moins élevée"} 
+                que la moyenne nationale ({territory_desert_percent:.1f}% contre {national_desert_percent:.1f}%).
+                """
+            
+            elements.append(Paragraph(analysis_text, styles['Normal']))
+                
+        except Exception as e:
+            # En cas d'erreur dans cette section, ajouter un message d'erreur au rapport
+            elements.append(Paragraph(f"Impossible de générer l'analyse comparative : données insuffisantes.", styles['Normal']))
+    
+    if include_sections.get('facteurs_influents', False):
+        elements.append(PageBreak())
+        elements.append(Paragraph("Facteurs influençant l'accès aux soins", styles['Heading1']))
+        
+        # Liste des facteurs corrélés avec l'APL
+        try:
+            correlation_vars = [
+                'median_living_standard', 'healthcare_education_establishments',
+                'density_area', 'unemployment_rate', 'active_local_business_rate',
+                'city_social_amenities_rate', '0_14_pop_rate', '15_59_pop_rate', '60+_pop_rate'
+            ]
+            
+            # Filtrer pour n'inclure que les variables disponibles
+            available_vars = [var for var in correlation_vars if var in filtered_data.columns]
+            
+            if available_vars:
+                # Calculer les corrélations avec l'APL
+                corr_data = []
+                for var in available_vars:
+                    try:
+                        corr = filtered_data['APL'].corr(filtered_data[var])
+                        if not pd.isna(corr):  # Ignorer les corrélations NaN
+                            corr_data.append((var, corr))
+                    except:
+                        # Ignorer les erreurs potentielles lors du calcul des corrélations
+                        pass
+                
+                # Créer un DataFrame pour le graphique
+                if corr_data:
+                    corr_df = pd.DataFrame(corr_data, columns=['Variable', 'Corrélation'])
+                    
+                    # Remplacer les noms des variables par des étiquettes plus lisibles
+                    factor_names = {
+                        'median_living_standard': 'Niveau de vie médian',
+                        'healthcare_education_establishments': 'Établissements de santé/éducation',
+                        'density_area': 'Densité de population',
+                        'unemployment_rate': 'Taux de chômage',
+                        'active_local_business_rate': 'Taux d\'entreprises actives',
+                        'city_social_amenities_rate': 'Équipements sociaux',
+                        '0_14_pop_rate': 'Population 0-14 ans',
+                        '15_59_pop_rate': 'Population 15-59 ans',
+                        '60+_pop_rate': 'Population 60+ ans'
+                    }
+                    
+                    corr_df['Variable'] = corr_df['Variable'].map(lambda x: factor_names.get(x, x))
+                    
+                    # Trier par valeur absolue de corrélation
+                    corr_df['Abs_Corr'] = corr_df['Corrélation'].abs()
+                    corr_df = corr_df.sort_values('Abs_Corr', ascending=False).drop('Abs_Corr', axis=1)
+                                        
+                    # Ajouter une analyse textuelle
+                    elements.append(Spacer(1, 10))
+                    
+                    # Identifier les facteurs les plus importants
+                    positive_factors = corr_df[corr_df['Corrélation'] > 0].head(3)
+                    negative_factors = corr_df[corr_df['Corrélation'] < 0].head(3)
+                    
+                    # Texte d'analyse
+                    factors_text = """
+                    Les facteurs ayant la plus forte influence sur l'accessibilité aux soins sont :
+                    """
+                    elements.append(Paragraph(factors_text, styles['Normal']))
+                    
+                    # Liste des facteurs positifs
+                    if not positive_factors.empty:
+                        elements.append(Paragraph("Facteurs favorisant un meilleur accès aux soins :", styles['Heading2']))
+                        pos_list = []
+                        for _, row in positive_factors.iterrows():
+                            factor_item = ListItem(Paragraph(f"{row['Variable']} (corrélation: {row['Corrélation']:.2f})", styles['Normal']))
+                            pos_list.append(factor_item)
+                        elements.append(ListFlowable(pos_list, bulletType='bullet'))
+                    
+                    # Liste des facteurs négatifs
+                    if not negative_factors.empty:
+                        elements.append(Paragraph("Facteurs associés à un accès plus limité aux soins :", styles['Heading2']))
+                        neg_list = []
+                        for _, row in negative_factors.iterrows():
+                            factor_item = ListItem(Paragraph(f"{row['Variable']} (corrélation: {row['Corrélation']:.2f})", styles['Normal']))
+                            neg_list.append(factor_item)
+                        elements.append(ListFlowable(neg_list, bulletType='bullet'))
+                    
+                    # Ajouter une explication d'interprétation
+                    elements.append(Spacer(1, 10))
+                    interpretation = """
+                    Note d'interprétation : Une corrélation positive signifie que l'augmentation du facteur est 
+                    associée à une meilleure accessibilité aux soins (APL plus élevé). Une corrélation négative 
+                    signifie que l'augmentation du facteur est associée à une moins bonne accessibilité aux soins.
+                    """
+                    elements.append(Paragraph(interpretation, styles['Normal']))
+                else:
+                    elements.append(Paragraph("Données insuffisantes pour analyser les facteurs d'influence.", styles['Normal']))
+            else:
+                elements.append(Paragraph("Données insuffisantes pour analyser les facteurs d'influence.", styles['Normal']))
+        except Exception as e:
+            # Gérer les erreurs potentielles
+            elements.append(Paragraph("Impossible d'analyser les facteurs d'influence en raison de données insuffisantes ou incomplètes.", styles['Normal']))
+    
+    # Recommandations
+    if include_recommendations:
+        elements.append(PageBreak())
+        elements.append(Paragraph("Recommandations", styles['Heading1']))
+        
+        # Déterminer la situation globale
+        situation = "non évaluée"  # Par défaut
+        recommendations = []
+        
+        try:
+            if territory_level == 'region' and not filtered_data.empty:
+                # Calculer le pourcentage de déserts médicaux
+                desert_percent = len(filtered_data[filtered_data['APL'] < 2.5]) / len(filtered_data) * 100 if len(filtered_data) > 0 else 0
+                
+                if desert_percent > 40:
+                    situation = "critique"
+                    intro_text = f"""
+                    La situation de l'accès aux soins dans {territory_name} est particulièrement préoccupante, 
+                    avec {desert_percent:.1f}% des communes en situation de désert médical. Les recommandations 
+                    suivantes visent à améliorer rapidement cette situation :
+                    """
+                    
+                    recommendations = [
+                        "Mise en place d'un plan d'urgence pour l'attraction et la rétention des professionnels de santé",
+                        "Développement prioritaire de centres de santé pluridisciplinaires dans les zones les plus touchées",
+                        "Déploiement de solutions de télémédecine avec des points d'accès dans chaque commune",
+                        "Création d'incitations financières exceptionnelles pour l'installation dans les zones critiques",
+                        "Mise en place d'un système de transport médical pour les populations vulnérables",
+                        "Coordination avec les facultés de médecine pour favoriser les stages en zone sous-dotée"
+                    ]
+                elif desert_percent > 20:
+                    situation = "préoccupante"
+                    intro_text = f"""
+                    La situation de l'accès aux soins dans {territory_name} est préoccupante, 
+                    avec {desert_percent:.1f}% des communes en situation de désert médical. Les recommandations 
+                    suivantes peuvent contribuer à améliorer cette situation :
+                    """
+                    
+                    recommendations = [
+                        "Développement de maisons de santé pluridisciplinaires dans les zones prioritaires",
+                        "Mise en place d'incitations à l'installation pour les nouveaux praticiens",
+                        "Renforcement de l'attractivité du territoire pour les professionnels de santé",
+                        "Amélioration des infrastructures de transport vers les pôles de santé",
+                        "Développement de solutions de télémédecine complémentaires"
+                    ]
+                else:
+                    situation = "relativement favorable"
+                    intro_text = f"""
+                    La situation de l'accès aux soins dans {territory_name} est relativement favorable, 
+                    avec seulement {desert_percent:.1f}% des communes en situation de désert médical. Les recommandations 
+                    suivantes visent à maintenir et améliorer cette situation :
+                    """
+                    
+                    recommendations = [
+                        "Mise en place d'un observatoire de l'accès aux soins pour anticiper les évolutions",
+                        "Planification des remplacements des départs en retraite des médecins",
+                        "Renforcement de l'offre de spécialistes dans les zones les moins bien pourvues",
+                        "Développement d'une stratégie d'attraction des professionnels de santé sur le long terme",
+                        "Optimisation de la coordination entre professionnels de santé"
+                    ]
+                
+                elements.append(Paragraph(intro_text, styles['Normal']))
+                elements.append(Spacer(1, 10))
+                
+                # Créer une liste à puces pour les recommandations
+                bullet_list = []
+                for recommendation in recommendations:
+                    bullet_list.append(ListItem(Paragraph(recommendation, styles['Normal'])))
+                elements.append(ListFlowable(bullet_list, bulletType='bullet'))
+                
+                # Ajouter des recommandations spécifiques pour les zones critiques
+                critical_desert_count = len(filtered_data[filtered_data['APL'] < 1.5])
+                critical_desert_percent = critical_desert_count / len(filtered_data) * 100 if len(filtered_data) > 0 else 0
+                
+                if critical_desert_percent > 10:
+                    elements.append(Spacer(1, 10))
+                    elements.append(Paragraph("Recommandations spécifiques pour les zones critiques (APL < 1,5)", styles['Heading2']))
+                    
+                    critical_recs = [
+                        "Déploiement de cabinets médicaux mobiles pour assurer une présence médicale régulière",
+                        f"Priorisation des {critical_desert_count} communes en situation critique dans les plans d'action",
+                        "Mise en place d'aides financières exceptionnelles pour l'installation de médecins",
+                        "Développement de solutions de télémédecine d'urgence"
+                    ]
+                    
+                    # Créer une liste à puces pour les recommandations critiques
+                    critical_list = []
+                    for recommendation in critical_recs:
+                        critical_list.append(ListItem(Paragraph(recommendation, styles['Normal'])))
+                    elements.append(ListFlowable(critical_list, bulletType='bullet'))
+            
+            elif territory_level == 'departement' and not filtered_data.empty:
+                # Calculer le pourcentage de déserts médicaux
+                desert_percent = len(filtered_data[filtered_data['APL'] < 2.5]) / len(filtered_data) * 100 if len(filtered_data) > 0 else 0
+                
+                if desert_percent > 40:
+                    situation = "critique"
+                    intro_text = f"""
+                    La situation de l'accès aux soins dans le département {territory_name} est particulièrement préoccupante, 
+                    avec {desert_percent:.1f}% des communes en situation de désert médical. Les recommandations 
+                    suivantes visent à améliorer rapidement cette situation :
+                    """
+                    
+                    recommendations = [
+                        "Mise en place d'un plan d'urgence départemental pour l'attraction des professionnels de santé",
+                        "Développement de centres de santé pluridisciplinaires dans les zones les plus touchées",
+                        "Déploiement de solutions de télémédecine avec points d'accès dans les communes isolées",
+                        "Création d'incitations financières exceptionnelles pour l'installation",
+                        "Mise en place d'un système de transport médical départemental"
+                    ]
+                elif desert_percent > 20:
+                    situation = "préoccupante"
+                    intro_text = f"""
+                    La situation de l'accès aux soins dans le département {territory_name} est préoccupante, 
+                    avec {desert_percent:.1f}% des communes en situation de désert médical. Les recommandations 
+                    suivantes peuvent contribuer à améliorer cette situation :
+                    """
+                    
+                    recommendations = [
+                        "Développement de maisons de santé pluridisciplinaires dans les zones prioritaires",
+                        "Mise en place d'incitations à l'installation ciblées",
+                        "Renforcement de l'attractivité du département pour les professionnels de santé",
+                        "Amélioration des transports vers les pôles de santé",
+                        "Développement de solutions de télémédecine complémentaires"
+                    ]
+                else:
+                    situation = "relativement favorable"
+                    intro_text = f"""
+                    La situation de l'accès aux soins dans le département {territory_name} est relativement favorable, 
+                    avec seulement {desert_percent:.1f}% des communes en situation de désert médical. Les recommandations 
+                    suivantes visent à maintenir et améliorer cette situation :
+                    """
+                    
+                    recommendations = [
+                        "Mise en place d'un observatoire départemental de l'accès aux soins",
+                        "Planification anticipée des remplacements des départs en retraite",
+                        "Renforcement de l'offre de spécialistes",
+                        "Développement d'une stratégie de long terme",
+                        "Optimisation de la coordination entre professionnels de santé"
+                    ]
+                
+                elements.append(Paragraph(intro_text, styles['Normal']))
+                elements.append(Spacer(1, 10))
+                
+                # Créer une liste à puces pour les recommandations
+                bullet_list = []
+                for recommendation in recommendations:
+                    bullet_list.append(ListItem(Paragraph(recommendation, styles['Normal'])))
+                elements.append(ListFlowable(bullet_list, bulletType='bullet'))
+                
+            elif territory_level == 'commune' and not commune_data.empty:
+                # Recommandation pour une commune unique
+                commune_apl = commune_data['APL'].iloc[0]
+                commune_name = commune_data['Communes'].iloc[0]
+                
+                if commune_apl < 1.5:
+                    situation = "critique"
+                    intro_text = f"""
+                    La situation de l'accès aux soins dans la commune de {commune_name} est critique (APL = {commune_apl:.2f}). 
+                    Les recommandations suivantes visent à améliorer rapidement cette situation :
+                    """
+                    
+                    recommendations = [
+                        "Mise en place d'un cabinet médical avec des aides à l'installation exceptionnelles",
+                        "Développement de solutions de télémédecine avec un point d'accès dans la commune",
+                        "Organisation de consultations régulières de médecins itinérants",
+                        "Mise en place d'un service de transport médical pour les habitants",
+                        "Collaboration avec les communes environnantes pour mutualiser les ressources médicales"
+                    ]
+                elif commune_apl < 2.5:
+                    situation = "préoccupante"
+                    intro_text = f"""
+                    La situation de l'accès aux soins dans la commune de {commune_name} est préoccupante (APL = {commune_apl:.2f}). 
+                    Les recommandations suivantes peuvent contribuer à améliorer cette situation :
+                    """
+                    
+                    recommendations = [
+                        "Développement d'incitations à l'installation pour les professionnels de santé",
+                        "Création d'un cabinet médical partagé avec plusieurs professionnels",
+                        "Mise en place de consultations régulières de spécialistes",
+                        "Amélioration des infrastructures de transport vers les pôles de santé",
+                        "Développement de solutions de télémédecine complémentaires"
+                    ]
+                else:
+                    situation = "satisfaisante"
+                    intro_text = f"""
+                    La situation de l'accès aux soins dans la commune de {commune_name} est satisfaisante (APL = {commune_apl:.2f}). 
+                    Les recommandations suivantes visent à maintenir et améliorer cette situation :
+                    """
+                    
+                    recommendations = [
+                        "Maintien de l'attractivité pour les professionnels de santé",
+                        "Anticipation des départs en retraite des médecins",
+                        "Diversification de l'offre de soins spécialisés",
+                        "Optimisation de la coordination entre professionnels de santé",
+                        "Promotion de la prévention et de l'éducation à la santé"
+                    ]
+                
+                elements.append(Paragraph(intro_text, styles['Normal']))
+                elements.append(Spacer(1, 10))
+                
+                # Créer une liste à puces pour les recommandations
+                bullet_list = []
+                for recommendation in recommendations:
+                    bullet_list.append(ListItem(Paragraph(recommendation, styles['Normal'])))
+                elements.append(ListFlowable(bullet_list, bulletType='bullet'))
+        except Exception as e:
+            # En cas d'erreur, ajouter un message générique
+            elements.append(Paragraph("Des recommandations personnalisées n'ont pas pu être générées en raison de données insuffisantes.", styles['Normal']))
+    
+    # Pied de page et conclusion
+    elements.append(PageBreak())
+    elements.append(Paragraph("Conclusion", styles['Heading1']))
+    
+    # Adapter la conclusion au territoire et à sa situation
+    try:
+        if territory_level == 'region':
+            # Calculer le pourcentage de déserts médicaux pour la conclusion
+            desert_percent = len(filtered_data[filtered_data['APL'] < 2.5]) / len(filtered_data) * 100 if len(filtered_data) > 0 else 0
+            
+            conclusion_text = f"""
+            Ce rapport présente une analyse approfondie de la situation de l'accès aux soins dans la région {territory_name}. 
+            Les données montrent une situation globalement {"critique" if desert_percent > 40 else "préoccupante" if desert_percent > 20 else "relativement favorable"}, 
+            avec {desert_percent:.1f}% des communes en situation de désert médical.
+            
+            Les recommandations proposées visent à améliorer l'accès aux soins dans la région en tenant compte 
+            des spécificités territoriales et des facteurs influençant l'accessibilité médicale.
+            
+            Ce rapport a été généré automatiquement par Medical'IA, outil d'analyse des déserts médicaux développé 
+            par l'équipe KESK'IA.
+            """
+        elif territory_level == 'departement':
+            # Calculer le pourcentage de déserts médicaux pour la conclusion
+            desert_percent = len(filtered_data[filtered_data['APL'] < 2.5]) / len(filtered_data) * 100 if len(filtered_data) > 0 else 0
+            
+            conclusion_text = f"""
+            Ce rapport présente une analyse approfondie de la situation de l'accès aux soins dans le département {territory_name}. 
+            Les données montrent une situation globalement {"critique" if desert_percent > 40 else "préoccupante" if desert_percent > 20 else "relativement favorable"}, 
+            avec {desert_percent:.1f}% des communes en situation de désert médical.
+            
+            Les recommandations proposées visent à améliorer l'accès aux soins dans le département en tenant compte 
+            des spécificités territoriales et des facteurs influençant l'accessibilité médicale.
+            
+            Ce rapport a été généré automatiquement par Medical'IA, outil d'analyse des déserts médicaux développé 
+            par l'équipe KESK'IA.
+            """
+        elif territory_level == 'commune' and not commune_data.empty:
+            # Récupérer l'APL de la commune pour la conclusion
+            commune_name = commune_data['Communes'].iloc[0]
+            commune_apl = commune_data['APL'].iloc[0]
+            
+            conclusion_text = f"""
+            Ce rapport présente une analyse de la situation de l'accès aux soins dans la commune de {commune_name}. 
+            Les données montrent une situation {"critique" if commune_apl < 1.5 else "préoccupante" if commune_apl < 2.5 else "satisfaisante"}, 
+            avec un APL de {commune_apl:.2f}.
+            
+            Les recommandations proposées visent à {"améliorer rapidement" if commune_apl < 2.5 else "maintenir et optimiser"} 
+            l'accès aux soins dans la commune en tenant compte des facteurs influençant l'accessibilité médicale.
+            
+            Ce rapport a été généré automatiquement par Medical'IA, outil d'analyse des déserts médicaux développé 
+            par l'équipe KESK'IA.
+            """
+        else:
+            # Texte générique si les données sont insuffisantes
+            conclusion_text = """
+            Ce rapport présente une analyse de la situation de l'accès aux soins pour le territoire sélectionné.
+            
+            Les recommandations proposées visent à améliorer l'accès aux soins en tenant compte 
+            des spécificités territoriales et des facteurs influençant l'accessibilité médicale.
+            
+            Ce rapport a été généré automatiquement par Medical'IA, outil d'analyse des déserts médicaux développé 
+            par l'équipe KESK'IA.
+            """
+    except Exception as e:
+        # Texte en cas d'erreur
+        conclusion_text = """
+        Ce rapport présente une analyse de l'accessibilité aux soins médicaux pour le territoire sélectionné.
+        
+        Ce rapport a été généré automatiquement par Medical'IA, outil d'analyse des déserts médicaux développé 
+        par l'équipe KESK'IA.
+        """
+    
+    elements.append(Paragraph(conclusion_text, styles['Normal']))
+    
+    # Ajouter contact et informations supplémentaires
+    elements.append(Spacer(1, 20))
+    elements.append(Paragraph("Pour plus d'informations ou une analyse personnalisée, contactez l'équipe KESK'IA.", styles['Normal']))
+    
+    # Construction finale du document
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
+
+# Ajout de l'interface utilisateur pour la génération de rapports dans Streamlit
+def add_report_generator_ui(data, filtered_data):
+    st.header("📊 Générateur de rapports PDF")
+    
+    st.markdown("""
+    Cette fonctionnalité permet de générer des rapports PDF détaillés sur la situation des déserts médicaux 
+    pour différents niveaux territoriaux. Ces rapports sont destinés aux collectivités administratives et 
+    aux décideurs pour faciliter la compréhension et la prise de décision.
+    """)
+    
+    # Sélection du niveau territorial
+    territory_level = st.selectbox(
+        "Niveau territorial",
+        ["Région", "Département", "Commune"],
+        help="Sélectionnez le niveau territorial pour lequel vous souhaitez générer un rapport"
+    )
+    
+    # Options en fonction du niveau territorial
+    # Modification de la partie de sélection de région dans add_report_generator_ui
+    if territory_level == "Région":
+        # Vérifier si la colonne region existe
+        if 'region' in filtered_data.columns:
+            # Convertir tous les éléments en chaînes de caractères avant de trier
+            regions = sorted([str(r) for r in filtered_data['region'].dropna().unique() if r is not None])
+            if regions:  # Vérifier que la liste n'est pas vide
+                territory_name = st.selectbox("Sélectionnez une région", regions)
+                selected_level = "region"
+            else:
+                st.error("Aucune région trouvée dans les données filtrées.")
+                return
+        else:
+            # Créer une correspondance départements -> régions
+            region_map = {
+                '01': 'Auvergne-Rhône-Alpes', '03': 'Auvergne-Rhône-Alpes', '07': 'Auvergne-Rhône-Alpes', 
+                '15': 'Auvergne-Rhône-Alpes', '26': 'Auvergne-Rhône-Alpes', '38': 'Auvergne-Rhône-Alpes',
+                '42': 'Auvergne-Rhône-Alpes', '43': 'Auvergne-Rhône-Alpes', '63': 'Auvergne-Rhône-Alpes',
+                '69': 'Auvergne-Rhône-Alpes', '73': 'Auvergne-Rhône-Alpes', '74': 'Auvergne-Rhône-Alpes',
+                '21': 'Bourgogne-Franche-Comté', '25': 'Bourgogne-Franche-Comté', '39': 'Bourgogne-Franche-Comté',
+                '58': 'Bourgogne-Franche-Comté', '70': 'Bourgogne-Franche-Comté', '71': 'Bourgogne-Franche-Comté',
+                '89': 'Bourgogne-Franche-Comté', '90': 'Bourgogne-Franche-Comté',
+                '22': 'Bretagne', '29': 'Bretagne', '35': 'Bretagne', '56': 'Bretagne',
+                '18': 'Centre-Val de Loire', '28': 'Centre-Val de Loire', '36': 'Centre-Val de Loire',
+                '37': 'Centre-Val de Loire', '41': 'Centre-Val de Loire', '45': 'Centre-Val de Loire',
+                '2A': 'Corse', '2B': 'Corse',
+                '08': 'Grand Est', '10': 'Grand Est', '51': 'Grand Est', '52': 'Grand Est',
+                '54': 'Grand Est', '55': 'Grand Est', '57': 'Grand Est', '67': 'Grand Est',
+                '68': 'Grand Est', '88': 'Grand Est',
+                '02': 'Hauts-de-France', '59': 'Hauts-de-France', '60': 'Hauts-de-France',
+                '62': 'Hauts-de-France', '80': 'Hauts-de-France',
+                '75': 'Île-de-France', '77': 'Île-de-France', '78': 'Île-de-France', '91': 'Île-de-France',
+                '92': 'Île-de-France', '93': 'Île-de-France', '94': 'Île-de-France', '95': 'Île-de-France',
+                '14': 'Normandie', '27': 'Normandie', '50': 'Normandie', '61': 'Normandie', '76': 'Normandie',
+                '16': 'Nouvelle-Aquitaine', '17': 'Nouvelle-Aquitaine', '19': 'Nouvelle-Aquitaine',
+                '23': 'Nouvelle-Aquitaine', '24': 'Nouvelle-Aquitaine', '33': 'Nouvelle-Aquitaine',
+                '40': 'Nouvelle-Aquitaine', '47': 'Nouvelle-Aquitaine', '64': 'Nouvelle-Aquitaine',
+                '79': 'Nouvelle-Aquitaine', '86': 'Nouvelle-Aquitaine', '87': 'Nouvelle-Aquitaine',
+                '09': 'Occitanie', '11': 'Occitanie', '12': 'Occitanie', '30': 'Occitanie',
+                '31': 'Occitanie', '32': 'Occitanie', '34': 'Occitanie', '46': 'Occitanie',
+                '48': 'Occitanie', '65': 'Occitanie', '66': 'Occitanie', '81': 'Occitanie', '82': 'Occitanie',
+                '44': 'Pays de la Loire', '49': 'Pays de la Loire', '53': 'Pays de la Loire',
+                '72': 'Pays de la Loire', '85': 'Pays de la Loire',
+                '04': 'Provence-Alpes-Côte d\'Azur', '05': 'Provence-Alpes-Côte d\'Azur',
+                '06': 'Provence-Alpes-Côte d\'Azur', '13': 'Provence-Alpes-Côte d\'Azur',
+                '83': 'Provence-Alpes-Côte d\'Azur', '84': 'Provence-Alpes-Côte d\'Azur',
+                '971': 'Outre-Mer', '972': 'Outre-Mer', '973': 'Outre-Mer', '974': 'Outre-Mer', '976': 'Outre-Mer',
+                '975': 'Outre-Mer', '977': 'Outre-Mer', '978': 'Outre-Mer', '986': 'Outre-Mer', '987': 'Outre-Mer',
+                '988': 'Outre-Mer'
+            }
+            
+            # Ajouter la colonne région aux données filtrées
+            filtered_data['region'] = filtered_data['CODGEO'].str[:2].map(region_map)
+            regions = sorted([r for r in filtered_data['region'].dropna().unique() if r is not None])
+            if regions:  # Vérifier que la liste n'est pas vide
+                territory_name = st.selectbox("Sélectionnez une région", regions)
+                selected_level = "region"
+            else:
+                st.error("Aucune région trouvée dans les données filtrées.")
+                return
+    elif territory_level == "Département":
+        departments = sorted(filtered_data['CODGEO'].str[:2].unique())
+        territory_name = st.selectbox("Sélectionnez un département", departments)
+        selected_level = "departement"
+    else:  # Commune
+        if len(filtered_data) > 1000:
+            # Pour faciliter la sélection, demander d'abord le département
+            departments = sorted(filtered_data['CODGEO'].str[:2].unique())
+            selected_dept = st.selectbox("Sélectionnez d'abord un département", departments)
+            
+            # Filtrer les communes du département sélectionné
+            communes_in_dept = filtered_data[filtered_data['CODGEO'].str[:2] == selected_dept]
+            
+            # Créer une liste des communes avec leur nom et code INSEE
+            commune_list = communes_in_dept[['CODGEO', 'Communes']].copy()
+            commune_list['selection'] = commune_list['Communes'] + ' (' + commune_list['CODGEO'] + ')'
+            
+            # Trier par nom de commune
+            commune_list = commune_list.sort_values('Communes')
+            
+            # Sélection de la commune
+            selected_commune = st.selectbox(
+                "Sélectionnez une commune",
+                commune_list['selection'].tolist()
+            )
+            
+            # Extraire le code INSEE de la sélection
+            territory_name = selected_commune.split('(')[-1].split(')')[0].strip()
+        else:
+            # Si peu de communes, on peut toutes les afficher directement
+            commune_list = filtered_data[['CODGEO', 'Communes']].copy()
+            commune_list['selection'] = commune_list['Communes'] + ' (' + commune_list['CODGEO'] + ')'
+            commune_list = commune_list.sort_values('Communes')
+            
+            selected_commune = st.selectbox(
+                "Sélectionnez une commune",
+                commune_list['selection'].tolist()
+            )
+            
+            territory_name = selected_commune.split('(')[-1].split(')')[0].strip()
+        
+        selected_level = "commune"
+    
+    # Configuration des sections du rapport
+    st.subheader("Contenu du rapport")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        include_sections = {
+            "carte_apl": st.checkbox("Carte de l'accessibilité aux soins", value=True),
+            "statistiques_detaillees": st.checkbox("Statistiques détaillées", value=True),
+            "analyse_comparative": st.checkbox("Analyse comparative", value=True),
+            "facteurs_influents": st.checkbox("Facteurs influençant l'accès aux soins", value=True)
+        }
+    
+    with col2:
+        include_recommendations = st.checkbox("Inclure des recommandations", value=True)
+        
+        # Personnalisation du rapport (options avancées)
+        with st.expander("Options avancées"):
+            custom_title = st.text_input("Titre personnalisé du rapport (optionnel)")
+            include_logo = st.checkbox("Inclure le logo Medical'IA", value=True)
+            include_contact = st.checkbox("Inclure les informations de contact", value=True)
+    
+    # Bouton pour générer le rapport
+    if st.button("Générer le rapport PDF"):
+        with st.spinner("Génération du rapport en cours..."):
+            try:
+                # Générer le rapport
+                pdf_buffer = generate_report_pdf(
+                    data=filtered_data,
+                    territory_level=selected_level,
+                    territory_name=territory_name,
+                    include_sections=include_sections,
+                    include_recommendations=include_recommendations
+                )
+                
+                # Convertir le PDF en base64 pour le téléchargement
+                b64_pdf = base64.b64encode(pdf_buffer.read()).decode('utf-8')
+                
+                # Créer un bouton de téléchargement
+                if selected_level == "region":
+                    filename = f"rapport_medical_ia_{territory_name.replace(' ', '_').lower()}.pdf"
+                elif selected_level == "departement":
+                    filename = f"rapport_medical_ia_dept_{territory_name}.pdf"
+                else:  # commune
+                    commune_name = filtered_data[filtered_data['CODGEO'] == territory_name]['Communes'].iloc[0]
+                    filename = f"rapport_medical_ia_{commune_name.replace(' ', '_').lower()}_{territory_name}.pdf"
+                
+                # Afficher le lien de téléchargement
+                href = f'<a href="data:application/pdf;base64,{b64_pdf}" download="{filename}">Télécharger le rapport PDF</a>'
+                st.markdown(href, unsafe_allow_html=True)
+                
+                # Afficher un aperçu du PDF
+                st.success("Le rapport a été généré avec succès. Cliquez sur le lien ci-dessus pour le télécharger.")
+                
+                # Ajouter un aperçu des premières pages du PDF
+                st.markdown("### Aperçu du rapport (première page)")
+                st.markdown(f'<iframe src="data:application/pdf;base64,{b64_pdf}" width="700" height="500"></iframe>', unsafe_allow_html=True)
+                
+            except Exception as e:
+                st.error(f"Une erreur s'est produite lors de la génération du rapport : {e}")
+                st.error("Veuillez vérifier les données et réessayer.")
+
+
 # Cette fonction permet d'intégrer le module à l'application principale
 def select_view_mode():
     if view_mode == "Clusters de communes":
@@ -3901,7 +4904,7 @@ if not data.empty:
     view_mode = st.sidebar.radio(
         "Mode de visualisation",
         ["Vue d'ensemble", "Cartographie détaillée", "Analyses territoriales", "Analyses socio-démographiques", 
-        "Clusters de communes", "Prévisions & Risques"]
+        "Clusters de communes", "Prévisions & Risques", "Générateur de rapports"]
     )
 
     analytics_data = {
@@ -3953,8 +4956,11 @@ if not data.empty:
     filtered_stats = calculate_stats(filtered_data)
     filtered_data_risk = data_risk[data_risk['CODGEO'].isin(filtered_data['CODGEO'])]
     
+    if view_mode == "Générateur de rapports":
+        add_report_generator_ui(data, filtered_data)
+
     # Affichage en fonction du mode choisi
-    if view_mode == "Vue d'ensemble":
+    elif view_mode == "Vue d'ensemble":
         # En-tête et présentation
 
         analytics_data["Détails Vue d'ensemble"] = {
@@ -5080,4 +6086,4 @@ else:
 
 # Pied de page
 st.markdown("---")
-st.markdown("Dashboard créé par l'équipe KESK'IA 2025 | Medical'IA : Combattre les déserts médicaux grâce à l'IA")
+st.markdown("Dashboard créé par l'équipe Medical'IA - KESK'IA 2025 | Medical'IA : Combattre les déserts médicaux grâce à l'IA")
