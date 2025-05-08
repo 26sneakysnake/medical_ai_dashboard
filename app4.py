@@ -32,7 +32,12 @@ st.set_page_config(
     page_title="Medical'IA - Analyse des Déserts Médicaux",
     page_icon="🏥",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
+    menu_items={
+        'Get Help': None,
+        'Report a bug': None,
+        'About': "Medical'IA - Projet KESK'IA 2025"
+    }
 )
 
 # Fonctions utilitaires
